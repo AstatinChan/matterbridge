@@ -207,20 +207,66 @@ func (b *Birc) handlePrivMsg(client *girc.Client, event girc.Event) {
 		avatarChan := make(chan string)
 
 		handleMetadata := func(client *girc.Client, event girc.Event) {
-			if event.Command == "761" && len(event.Params) >= 5 && event.Params[1] == rmsg.Username && event.Params[2] == "avatar" {
+			// RPL_KEYVALUE
+			if (event.Command == "761" &&
+				len(event.Params) >= 5 &&
+				event.Params[1] == rmsg.Username &&
+				event.Params[2] == "avatar") {
 				avatarChan <- event.Params[4]
 			}
 
-			if event.Command == "766" && len(event.Params) >= 4 && event.Params[1] == rmsg.Username && event.Params[2] == "avatar" {
+			// ERR_NOMATCHINGKEY or ERR_KEYNOTSET (avatar has not been set by the user)
+			// ergo seems to return a 766 while the IRCv3 doc mentions ERR_KEYNOTSET (768)
+			// Just to be sure, I'm handling both
+			if ((event.Command == "766" || event.Command == "768") &&
+				len(event.Params) >= 3 &&
+				event.Params[1] == rmsg.Username && event.Params[2] == "avatar") {
+				avatarChan <- ""
+			}
+
+			// FAIL METADATA INVALID_TARGET (if the user left since)
+			if (event.Command == "FAIL" &&
+				len(event.Params) >= 3 &&
+				event.Params[0] == "METADATA" &&
+				event.Params[1] == "INVALID_TARGET" &&
+				event.Params[2] == rmsg.Username) {
+				avatarChan <- ""
+			}
+
+			// FAIL METADATA KEY_NO_PERMISSION (mentionned in the IRCv3 doc as possible)
+			// I'm not sure if this case would be
+			// 		FAIL METADATA KEY_NO_PERMISSION avatar
+			// or
+			// 		FAIL METADATA KEY_NO_PERMISSION <nickname> avatar
+			// So I'm accepting both
+			if (event.Command == "FAIL" &&
+				len(event.Params) >= 3 &&
+				event.Params[0] == "METADATA" &&
+				event.Params[1] == "KEY_NO_PERMISSION" &&
+				((event.Params[2] == "avatar") ||
+				(len(event.Params) >= 4 &&
+				 event.Params[2] == rmsg.Username &&
+				 event.Params[3] == "avatar"))) {
+				avatarChan <- ""
+			}
+
+			// ERR_UNKNOWNCOMMAND (METADATA is IRCv3 specific)
+			if event.Command == "421" && len(event.Params) >= 2 && event.Params[1] == "METADATA" {
 				avatarChan <- ""
 			}
 		}
 		repl_cuid := b.i.Handlers.AddBg("761", handleMetadata)
-		err_cuid := b.i.Handlers.AddBg("766", handleMetadata)
+		err_nomatching_cuid := b.i.Handlers.AddBg("766", handleMetadata)
+		err_keynotset_cuid := b.i.Handlers.AddBg("768", handleMetadata)
+		fail_cuid := b.i.Handlers.AddBg("FAIL", handleMetadata)
+		unkn_cuid := b.i.Handlers.AddBg("421", handleMetadata)
 		b.i.Cmd.SendRawf("METADATA %s GET avatar", event.Source.Name)
 		rmsg.Avatar = <-avatarChan
 		b.i.Handlers.Remove(repl_cuid)
-		b.i.Handlers.Remove(err_cuid)
+		b.i.Handlers.Remove(err_nomatching_cuid)
+		b.i.Handlers.Remove(err_keynotset_cuid)
+		b.i.Handlers.Remove(fail_cuid)
+		b.i.Handlers.Remove(unkn_cuid)
 	}
 
 	b.Log.Debugf("== Receiving PRIVMSG: %s %s %#v", event.Source.Name, event.Last(), event)
