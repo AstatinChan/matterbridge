@@ -202,6 +202,27 @@ func (b *Birc) handlePrivMsg(client *girc.Client, event girc.Event) {
 		UserID:   event.Source.Ident + "@" + event.Source.Host,
 	}
 
+
+	if b.GetBool("IRCMetadataAvatars") {
+		avatarChan := make(chan string)
+
+		handleMetadata := func(client *girc.Client, event girc.Event) {
+			if event.Command == "761" && len(event.Params) >= 5 && event.Params[1] == rmsg.Username && event.Params[2] == "avatar" {
+				avatarChan <- event.Params[4]
+			}
+
+			if event.Command == "766" && len(event.Params) >= 4 && event.Params[1] == rmsg.Username && event.Params[2] == "avatar" {
+				avatarChan <- ""
+			}
+		}
+		repl_cuid := b.i.Handlers.AddBg("761", handleMetadata)
+		err_cuid := b.i.Handlers.AddBg("766", handleMetadata)
+		b.i.Cmd.SendRawf("METADATA %s GET avatar", event.Source.Name)
+		rmsg.Avatar = <-avatarChan
+		b.i.Handlers.Remove(repl_cuid)
+		b.i.Handlers.Remove(err_cuid)
+	}
+
 	b.Log.Debugf("== Receiving PRIVMSG: %s %s %#v", event.Source.Name, event.Last(), event)
 
 	// set action event

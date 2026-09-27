@@ -177,6 +177,7 @@ type Protocol struct {
 	VerboseJoinPart        bool       // IRC
 	WebhookBindAddress     string     // mattermost, slack
 	WebhookURL             string     // mattermost, slack
+	IRCMetadataAvatars	   bool // IRC
 }
 
 type ChannelOptions struct {
